@@ -756,17 +756,33 @@ export default {
     }
 
     if (path === '/' || path === '/index.html') {
+      const base = url.origin;
+      const sample = 'https://open.spotify.com/track/1kZvBIepQFlgUywAub2h56';
+      const pad = (text, width) => text + ' '.repeat(Math.max(1, width - text.length));
+      const routes = [
+        ['/api/scrape?url=<spotify link>', 'full metadata as JSON'],
+        ['/api/embed?url=<spotify link>', 'embed player; &format=html = iframe page'],
+        ['/api/parse?url=<spotify link>', 'link analysis: type, id, canonical url'],
+        ['/api/track/<id>', 'also album, playlist, artist, episode, show'],
+        ['/health', 'status'],
+      ];
+      const width = Math.max(...routes.map(([r]) => ('GET ' + base + r).length)) + 2;
       const lines = [
         'Spotify Scraper API v' + VERSION,
+        'base url: ' + base,
         '',
-        'GET /api/scrape?url=<spotify link>',
-        'GET /api/embed?url=<spotify link>       add &format=html for an iframe page',
-        'GET /api/parse?url=<spotify link>',
-        'GET /api/track/<id>                     also album, playlist, artist, episode, show',
-        'GET /health',
+        'how to use: put any Spotify share link into the url parameter',
         '',
-        'options: tracks=1  limit=10  light=1  intl=es  raw=1',
       ];
+      for (const [route, note] of routes) lines.push(pad('GET ' + base + route, width) + note);
+      lines.push(
+        '',
+        'example:',
+        '  ' + base + '/api/scrape?url=' + sample,
+        '  curl "' + base + '/api/scrape?url=' + sample + '"',
+        '',
+        'options: &tracks=1  &limit=10  &light=1  &intl=es  &raw=1',
+      );
       return new Response(lines.join('\n') + '\n', {
         status: 200,
         headers: {

@@ -28,6 +28,11 @@
 > `github.com/<username>/<repository>` path, otherwise it will deploy someone
 > else's repository.
 
+> **Live demo:** https://spotify-metadata-scraper.dinujayathishan06.workers.dev - the author's own deployment.
+> Every deployment of this repository gets its own URL, and the code contains no
+> hard-coded address: `GET /` and `GET /health` print the URL of whatever host
+> served the request. See [Your own URL](#your-own-url-nothing-to-edit).
+
 An API-only Cloudflare Worker that reads metadata from public Spotify resource
 pages and Spotify's own oEmbed endpoint. It returns titles, descriptions,
 artwork, artists, durations, release dates, tracklists, a 30-second preview URL
@@ -90,13 +95,17 @@ npx wrangler deploy
 Then:
 
 ```bash
-curl "https://spotify-metadata-scraper.dinujayathishan06.workers.dev/api/scrape?url=https://open.spotify.com/track/1kZvBIepQFlgUywAub2h56"
+curl "https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/api/scrape?url=https://open.spotify.com/track/1kZvBIepQFlgUywAub2h56"
 ```
+
+Swap `YOUR-WORKER.YOUR-SUBDOMAIN` for the URL Cloudflare gave you. If you would
+rather not look it up, open your Worker's root URL - it prints its own address,
+every route as an absolute URL, and a ready-to-run `curl` example.
 
 The exact link the Spotify app copies works too — tracking parameters are stripped automatically:
 
 ```bash
-curl "https://spotify-metadata-scraper.dinujayathishan06.workers.dev/api/scrape?url=https%3A%2F%2Fopen.spotify.com%2Ftrack%2F1kZvBIepQFlgUywAub2h56%3Fsi%3Dcq52Cz8HRdGNhNB-P8EfiQ%26utm_source%3Dcopy-link"
+curl "https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/api/scrape?url=https%3A%2F%2Fopen.spotify.com%2Ftrack%2F1kZvBIepQFlgUywAub2h56%3Fsi%3Dcq52Cz8HRdGNhNB-P8EfiQ%26utm_source%3Dcopy-link"
 ```
 
 ## Endpoints
@@ -114,7 +123,7 @@ Supported types: `track`, `album`, `playlist`, `artist`, `show`, `episode`.
 ### `POST /api/scrape`
 
 ```bash
-curl -X POST "https://spotify-metadata-scraper.dinujayathishan06.workers.dev/api/scrape" \
+curl -X POST "https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/api/scrape" \
   -H "Content-Type: application/json" \
   -d '{"url":"https://open.spotify.com/track/1kZvBIepQFlgUywAub2h56"}'
 ```
@@ -140,23 +149,46 @@ Shortcuts for `/api/scrape`: `/api/track/1kZvBIepQFlgUywAub2h56`,
 
 Both stay public even when an API key is set, so uptime monitors keep working.
 
-`/` returns a **short plain-text index** — ten lines or fewer, no JSON to wade
-through:
+`/` returns a **short plain-text index** — sixteen lines, every route shown as a
+full copy-pasteable URL, plus a ready-to-run example:
 
 ```text
 Spotify Scraper API v2.3.0
+base url: https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev
 
-GET /api/scrape?url=<spotify link>
-GET /api/embed?url=<spotify link>       add &format=html for an iframe page
-GET /api/parse?url=<spotify link>
-GET /api/track/<id>                     also album, playlist, artist, episode, show
-GET /health
+how to use: put any Spotify share link into the url parameter
 
-options: tracks=1  limit=10  light=1  intl=es  raw=1
+GET https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/api/scrape?url=<spotify link>  full metadata as JSON
+GET https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/api/embed?url=<spotify link>   embed player; &format=html = iframe page
+GET https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/api/parse?url=<spotify link>   link analysis: type, id, canonical url
+GET https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/api/track/<id>                 also album, playlist, artist, episode, show
+GET https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/health                         status
+
+example:
+  https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/api/scrape?url=https://open.spotify.com/track/1kZvBIepQFlgUywAub2h56
+  curl "https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/api/scrape?url=https://open.spotify.com/track/1kZvBIepQFlgUywAub2h56"
+
+options: &tracks=1  &limit=10  &light=1  &intl=es  &raw=1
 ```
 
+### Your own URL (nothing to edit)
+
+The `base url:` line and every route in that index are built at run time from
+`new URL(request.url).origin` - the host that served the request. There is **no
+hard-coded URL anywhere in `worker.js`**, so:
+
+| Deployment | What `/` prints |
+| --- | --- |
+| The author's Worker | `https://spotify-metadata-scraper.dinujayathishan06.workers.dev` |
+| Your Worker (`wrangler deploy` or the dashboard) | `https://<worker-name>.<your-subdomain>.workers.dev` |
+| Your Worker with a custom domain | `https://api.yourdomain.com` |
+| `npx wrangler dev` on your machine | `http://127.0.0.1:8787` |
+
+`GET /health` reports the same thing as `base_url` and `api_index`, so a script
+can discover the correct address without reading the README.
+
 ```bash
-curl "https://spotify-metadata-scraper.dinujayathishan06.workers.dev/"
+curl "https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/"
 ```
 
 Only the index is shortened. `/api/*` responses keep every field — a track
@@ -170,8 +202,8 @@ settings and supported types.
   "success": true,
   "name": "Spotify Scraper API",
   "version": "2.3.0",
-  "base_url": "https://spotify-metadata-scraper.dinujayathishan06.workers.dev",
-  "api_index": "https://spotify-metadata-scraper.dinujayathishan06.workers.dev/",
+  "base_url": "https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev",
+  "api_index": "https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/",
   "requires_api_key": false,
   "auth": "public",
   "cache": "on (pages 21600s, responses 3600s)",
@@ -256,7 +288,7 @@ Short version: **tracking noise that you can delete.**
 Ask the API instead of guessing:
 
 ```bash
-curl "https://spotify-metadata-scraper.dinujayathishan06.workers.dev/api/parse?url=https%3A%2F%2Fopen.spotify.com%2Ftrack%2F1kZvBIepQFlgUywAub2h56%3Fsi%3Dcq52Cz8HRdGNhNB-P8EfiQ%26utm_source%3Dcopy-link"
+curl "https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/api/parse?url=https%3A%2F%2Fopen.spotify.com%2Ftrack%2F1kZvBIepQFlgUywAub2h56%3Fsi%3Dcq52Cz8HRdGNhNB-P8EfiQ%26utm_source%3Dcopy-link"
 ```
 
 ```json
@@ -393,7 +425,8 @@ user-agent rotation usually resolves it.
 1. Go to [dash.cloudflare.com](https://dash.cloudflare.com) → **Workers & Pages** → **Create** → **Create Worker**
 2. Name it (for example `spotify-metadata-scraper`) → **Create**
 3. Click **Quick edit**, delete the template code, **paste the entire contents of [`worker.js`](./worker.js)** → **Deploy**
-4. Copy your new URL: `https://spotify-metadata-scraper.dinujayathishan06.workers.dev`
+4. Copy your new URL - Cloudflare shows it on the Worker overview page:
+   `https://<worker-name>.<your-subdomain>.workers.dev`
 
 That is the whole deployment. There is nothing to install and nothing to build,
 and `worker.js` is pure ASCII so the dashboard editor detects it as valid
@@ -415,6 +448,13 @@ This repository already contains the two files that build needs:
 | --- | --- |
 | `wrangler.toml` | Tells Wrangler **which file to upload** (`main = "worker.js"`), which Worker name to deploy to, and which `compatibility_date` to use |
 | `package.json` | Pins `wrangler@^4` so the build does not install an outdated 3.x release |
+
+`name = "spotify-metadata-scraper"` in `wrangler.toml` is the Worker name, and it
+becomes the first label of your `workers.dev` URL. Worker names are **scoped to a
+Cloudflare account**, so deploying this repository cannot clash with or overwrite
+anyone else's Worker - but if you already own a Worker with that name in your own
+account the build will update that one. Change `name` here (and `name` in
+`package.json`) if you want a different URL.
 
 Without `wrangler.toml` the build fails like this:
 
@@ -445,7 +485,7 @@ Both combinations are verified:
 
 | wrangler | `deploy --dry-run` | runtime starts | scrape works |
 | --- | --- | --- | --- |
-| 3.114.17 (what Workers Builds installed) | ✅ 37.33 KiB / gzip 10.86 KiB | ✅ | ✅ 200 in 0.59 s |
+| 3.114.17 (what Workers Builds installed) | ✅ 37.55 KiB / gzip 10.89 KiB | ✅ | ✅ 200 in 0.59 s |
 | 4.86.0 | ✅ | ✅ | ✅ |
 
 > Nothing else is needed. There is still no build step, no bundler config and no
@@ -501,7 +541,7 @@ curl "http://localhost:8785/api/scrape?url=https%3A%2F%2Fopen.spotify.com%2Ftrac
 **Secret**, name it `API_KEY`, give it a value, and save. Clients must then send:
 
 ```bash
-curl "https://spotify-metadata-scraper.dinujayathishan06.workers.dev/api/scrape?url=…" -H "x-api-key: YOUR_SECRET"
+curl "https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/api/scrape?url=…" -H "x-api-key: YOUR_SECRET"
 ```
 
 `Authorization: Bearer YOUR_SECRET` and `?key=YOUR_SECRET` also work. With no
@@ -537,7 +577,7 @@ spotify-metadata-scraper/
 ├── wrangler.toml          entry point + compatibility date (needed for CLI/Git deploys)
 ├── package.json           pins wrangler@^4 for CI builds; adds npm scripts
 ├── .gitignore
-├── test.js                25 tests, run with `node test.js`
+├── test.js                27 tests, run with `node test.js`
 ├── example-response.json  a real captured response
 ├── README.md
 └── LICENSE
@@ -598,6 +638,8 @@ so you are not hammering Spotify on other people's behalf.
 ## Author
 
 **Thishan Dinujaya**
+
+Live demo: https://spotify-metadata-scraper.dinujayathishan06.workers.dev
 
 ## License
 

@@ -13,22 +13,27 @@ async function call(path, method = 'GET') {
   return { status: res.status, body, res };
 }
 
-test('/ returns a short plain-text index of 10 lines or fewer', async () => {
-  const res = await worker.fetch(new Request('https://spotify-api.local/'), {}, {});
+test('/ returns a short plain-text index with the base url and a usage example', async () => {
+  const origin = 'https://spotify-api.local';
+  const res = await worker.fetch(new Request(origin + '/'), {}, {});
   const text = await res.text();
   assert.equal(res.status, 200);
   assert.match(res.headers.get('content-type'), /text\/plain/);
 
   const lines = text.split('\n');
   if (lines[lines.length - 1] === '') lines.pop();
-  assert.ok(lines.length <= 10, `expected 10 lines or fewer, got ${lines.length}`);
-  assert.ok(text.length < 600, `expected a short body, got ${text.length} bytes`);
+  assert.ok(lines.length <= 20, `expected 20 lines or fewer, got ${lines.length}`);
+  assert.ok(text.length < 1600, `expected a short body, got ${text.length} bytes`);
 
   assert.match(text, /Spotify Scraper API v\d/);
+  assert.ok(text.includes('base url: ' + origin), 'shows the base url');
+  assert.ok(text.includes('how to use'), 'shows how to use it');
+  assert.match(text, /curl /, 'shows a curl example');
+
   for (const p of ['/api/scrape', '/api/embed', '/api/parse', '/api/track', '/health']) {
-    assert.ok(text.includes(p), `mentions ${p}`);
+    assert.ok(text.includes(origin + p), `shows the absolute url of ${p}`);
   }
-  assert.ok(!text.includes('{'), 'plain text, not JSON');
+  assert.ok(!text.trimStart().startsWith('{'), 'plain text, not JSON');
 });
 
 test('API responses stay full-size (only / is shortened)', async () => {
