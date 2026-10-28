@@ -1,5 +1,5 @@
 const PAGE_TTL = 21600;
-const RESPONSE_TTL = 3600;
+const RESPONSE_TTL = 21600;
 const MAX_TRACKS = 25;
 const CORS_ORIGIN = '*';
 const CACHE_ON = true;
@@ -12,7 +12,7 @@ const BOT_USER_AGENTS = [
 
 const RESOURCE_TYPES = new Set(['track', 'album', 'playlist', 'artist', 'episode', 'show']);
 const ID_RE = /^[0-9A-Za-z]{22}$/;
-const VERSION = '2.3.0';
+const VERSION = '2.4.0';
 
 const ENTITIES = {
   amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: '\u00a0',
@@ -388,7 +388,7 @@ function buildTrack(resource, html) {
       kind: parts[2] || null,
       artists_text: parts[0] || metaOne(metas, 'music:musician_description') || null,
       artists: artists.map((a) => ({ ...a, name: null })),
-      album: album ? { ...album, name: parts[1] || null, track_number: Number.isFinite(trackNumber) ? trackNumber : null } : null,
+      album: album ? { ...album, album_type: null, name: parts[1] || null, track_number: Number.isFinite(trackNumber) ? trackNumber : null } : null,
       duration: durationFrom(metas),
       release_date: metaOne(metas, 'music:release_date') || ld?.datePublished || null,
       available_in: metaAll(metas, 'og:restrictions:country:allowed'),
@@ -537,6 +537,20 @@ async function expandArtists(entity, ctx, limit = 6) {
   return entity;
 }
 
+async function expandAlbumType(entity, ctx) {
+  const album = entity.metadata?.album;
+  if (!album?.id || album.album_type) return entity;
+  try {
+    const { html, degraded } = await getPage({ type: 'album', id: album.id, locale: null }, ctx);
+    if (!html || degraded) return entity;
+    const parts = splitDescription(metaOne(extractMetas(html), 'og:description') || '');
+    album.album_type = parts.find((p) => /^(album|ep|single|compilation)$/i.test(p))?.toLowerCase() ?? null;
+  } catch {
+
+  }
+  return entity;
+}
+
 async function expandTracks(entity, ctx, limit) {
   const targets = (entity.metadata?.tracks || []).slice(0, limit);
   if (!targets.length) return entity;
@@ -593,7 +607,9 @@ async function scrape(input, ctx, opts = {}) {
 
   const degraded = Boolean(!page || page.degraded || !entity.title);
   if (page && !page.degraded) {
-    if (resource.type === 'track' && opts.light !== true) await expandArtists(entity, ctx);
+    if (resource.type === 'track' && opts.light !== true) {
+      await Promise.all([expandArtists(entity, ctx), expandAlbumType(entity, ctx)]);
+    }
     if (opts.tracks) await expandTracks(entity, ctx, opts.limit);
   }
 

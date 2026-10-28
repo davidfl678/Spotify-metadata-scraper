@@ -1,6 +1,6 @@
 {
   "name": "spotify-metadata-scraper",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "description": "A single-file, keyless serverless API for public Spotify metadata and embeddable player links. Runs on Cloudflare Workers with zero runtime dependencies.",
   "type": "module",
   "main": "worker.js",

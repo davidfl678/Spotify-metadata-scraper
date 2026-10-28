@@ -173,6 +173,20 @@ test('album returns a clean JSON-LD title plus a tracklist', async () => {
   assert.equal(body.metadata.tracks[0].position, 1);
 });
 
+test('a track reports its album type, read from the album page', async () => {
+  const { status, body } = await call(`/api/track/${ID}`);
+  assert.equal(status, 200);
+  assert.equal(body.metadata.album.name, 'TURAN 2');
+  assert.equal(body.metadata.album.album_type, 'ep');
+});
+
+test('light=1 skips the album lookup, so album_type stays null but present', async () => {
+  const { status, body } = await call(`/api/track/${ID}?light=1`);
+  assert.equal(status, 200);
+  assert.ok('album_type' in body.metadata.album, 'field is always present');
+  assert.equal(body.metadata.album.album_type, null);
+});
+
 test('artist returns parsed monthly listeners and correct image sizes', async () => {
   const { status, body } = await call('/api/artist/0rBrjQPcLqHj1Jk8Jvw7Xj');
   assert.equal(status, 200);
@@ -245,6 +259,20 @@ test('repeat requests are served stably and carry an x-cache header', async () =
   assert.equal(second.body.title, 'TURAN 2 - Slowed');
 
   assert.ok(['HIT', 'MISS'].includes(second.res.headers.get('x-cache')));
+});
+
+test('successful responses tell clients to cache for six hours, errors do not', async () => {
+  const ok = await call('/api/scrape?url=' + encodeURIComponent(`https://open.spotify.com/track/${ID}`));
+  const cc = ok.res.headers.get('cache-control');
+  assert.equal(ok.status, 200);
+  assert.match(cc, /public/);
+  assert.match(cc, /max-age=21600/);
+  assert.match(cc, /s-maxage=21600/);
+  assert.match(cc, /stale-while-revalidate=86400/);
+
+  const bad = await call('/api/scrape?url=' + encodeURIComponent('https://example.com/not-spotify'));
+  assert.equal(bad.status, 400);
+  assert.equal(bad.res.headers.get('cache-control'), 'no-store');
 });
 
 test('POST with a JSON body works', async () => {

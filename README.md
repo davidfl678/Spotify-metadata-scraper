@@ -9,12 +9,12 @@
 [![No API key](https://img.shields.io/badge/API%20key-not%20required-1db954?style=for-the-badge)](#no-api-keys-really)
 [![Zero dependencies](https://img.shields.io/badge/dependencies-0-5965f2?style=for-the-badge)](#project-structure)
 [![Single file](https://img.shields.io/badge/deploy-paste%20one%20file-ff69b4?style=for-the-badge)](#quick-start)
-[![Tests](https://img.shields.io/badge/tests-27%20passing-brightgreen?style=for-the-badge)](#testing)
+[![Tests](https://img.shields.io/badge/tests-30%20passing-brightgreen?style=for-the-badge)](#testing)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2ea44f?style=for-the-badge)](./LICENSE)
 
 ### Tracks · Albums · Playlists · Artists · Shows · Episodes
 
-[Features](#features) · [Quick start](#quick-start) · [Endpoints](#endpoints) · [Example response](#example-response) · [Gotchas](#the-four-spotify-behaviours-this-worker-handles) · [Deploy](#deploy-to-cloudflare-workers) · [Disclaimer](#disclaimer)
+[Features](#features) · [Quick start](#quick-start) · [Endpoints](#endpoints) · [Example response](#example-response) · [Gotchas](#the-four-spotify-behaviours-this-worker-handles) · [Deploy](#deploy-to-cloudflare-workers) · [Request budget](#request-budget-workers-free-100kday) · [Disclaimer](#disclaimer)
 
 <br />
 
@@ -28,10 +28,10 @@
 > `github.com/<username>/<repository>` path, otherwise it will deploy someone
 > else's repository.
 
-> **Live demo:** https://spotify-metadata-scraper.dinujayathishan06.workers.dev - the author's own deployment.
-> Every deployment of this repository gets its own URL, and the code contains no
-> hard-coded address: `GET /` and `GET /health` print the URL of whatever host
-> served the request. See [Your own URL](#your-own-url-nothing-to-edit).
+> **Your URL, not the author's:** this repository contains **no hard-coded
+> deployment address**. `GET /` and `GET /health` build every URL from the host
+> that served the request, so your deployment prints your own.
+> See [Your own URL](#your-own-url-nothing-to-edit).
 
 An API-only Cloudflare Worker that reads metadata from public Spotify resource
 pages and Spotify's own oEmbed endpoint. It returns titles, descriptions,
@@ -153,7 +153,7 @@ Both stay public even when an API key is set, so uptime monitors keep working.
 full copy-pasteable URL, plus a ready-to-run example:
 
 ```text
-Spotify Scraper API v2.3.0
+Spotify Scraper API v2.4.0
 base url: https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev
 
 how to use: put any Spotify share link into the url parameter
@@ -179,7 +179,6 @@ hard-coded URL anywhere in `worker.js`**, so:
 
 | Deployment | What `/` prints |
 | --- | --- |
-| The author's Worker | `https://spotify-metadata-scraper.dinujayathishan06.workers.dev` |
 | Your Worker (`wrangler deploy` or the dashboard) | `https://<worker-name>.<your-subdomain>.workers.dev` |
 | Your Worker with a custom domain | `https://api.yourdomain.com` |
 | `npx wrangler dev` on your machine | `http://127.0.0.1:8787` |
@@ -192,7 +191,7 @@ curl "https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/"
 ```
 
 Only the index is shortened. `/api/*` responses keep every field — a track
-response is still around 3.5 KB of full metadata.
+response is still around 3.9 KB of full metadata.
 
 `/health` returns compact JSON: status, version, `base_url`, auth mode, cache
 settings and supported types.
@@ -201,12 +200,12 @@ settings and supported types.
 {
   "success": true,
   "name": "Spotify Scraper API",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "base_url": "https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev",
   "api_index": "https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/",
   "requires_api_key": false,
   "auth": "public",
-  "cache": "on (pages 21600s, responses 3600s)",
+  "cache": "on (pages 21600s, responses 21600s)",
   "supported_types": ["track", "album", "playlist", "artist", "episode", "show"],
   "license": "MIT (c) Thishan Dinujaya"
 }
@@ -217,7 +216,7 @@ settings and supported types.
 | Option | Effect |
 | --- | --- |
 | `?tracks=1&limit=10` | For albums/playlists: fetch each track's page for title, artists, duration and preview. `limit` is capped at 25. |
-| `?light=1` | Skip artist-page lookups. Fastest response; `artists[].name` stays `null`. |
+| `?light=1` | Skip the artist-page and album-page lookups. Fastest response; `artists[].name` and `album.album_type` stay `null`. |
 | `?intl=es` | Force a locale. Also detected automatically from `/intl/<locale>/` links. |
 | `?raw=1` | Include `raw_meta`: every `<meta>` tag scraped from the page. Useful for debugging. |
 
@@ -250,7 +249,7 @@ settings and supported types.
       { "id": "0rBrjQPcLqHj1Jk8Jvw7Xj", "name": "ASTXR",  "monthly_listeners": 933200, "monthly_listeners_text": "933.2K" },
       { "id": "3RmsXE6ZPyE1hLXyR2VvNa", "name": "zxguss", "monthly_listeners": 59500,  "monthly_listeners_text": "59.5K"  }
     ],
-    "album": { "id": "4ntJgEVBlc3K4SWfKCQ7PS", "name": "TURAN 2", "track_number": 2 },
+    "album": { "id": "4ntJgEVBlc3K4SWfKCQ7PS", "album_type": "ep", "name": "TURAN 2", "track_number": 2 },
     "duration": { "seconds": 102, "ms": 102000, "formatted": "1:42" },
     "release_date": "2026-10-16",
     "available_in": ["AR", "AU", "AT", "…185 countries"],
@@ -270,6 +269,15 @@ settings and supported types.
 
 A captured copy lives in [`example-response.json`](./example-response.json).
 Some fields are `null` when Spotify does not expose them for that resource.
+
+`metadata.album.album_type` is one of `album`, `ep`, `single` or `compilation`.
+Spotify's **track** pages do not expose it anywhere in their HTML, so the Worker
+reads it from the album's own page - in parallel with the artist lookups, so a
+normal request does not get slower for it. With `?light=1` the album page is not
+fetched and the field stays `null`. Album responses carry the same field at
+`metadata.album_type`. Do not confuse the two album fields: `album.type` is always
+`"album"` (what kind of resource the link points at), while `album.album_type` is
+the release type - `album`, `ep`, `single` or `compilation`.
 
 ## What is `?si=` / `utm_source=copy-link`?
 
@@ -550,6 +558,50 @@ secret set, the API is public. `/` and `/health` remain public either way.
 Other settings live as constants at the top of `worker.js`: `PAGE_TTL` (6 h),
 `RESPONSE_TTL` (1 h), `MAX_TRACKS` (25), `CORS_ORIGIN` (`*`), `CACHE_ON` (`true`).
 
+## Request budget (Workers Free: 100k/day)
+
+The Workers Free plan allows **100,000 requests per day**, counted **per
+Cloudflare account** - every Worker and Pages Function you own shares that one
+counter - and it resets at **midnight UTC**. Past the cap Cloudflare returns
+**Error 1027** until the reset. Workers Paid ($5/month minimum) includes 10
+million requests per month.
+
+What does and does not consume that counter:
+
+| | Counts? |
+| --- | --- |
+| Any inbound request to your Worker - `/`, `/health`, 404s, bot scans | ✅ yes, one each |
+| Subrequests the Worker makes to Spotify | ❌ no - Cloudflare does not count or bill them (free plan: max 50 per invocation) |
+| A hit in the Worker's own Cache API (`"cached": true`, `x-cache: HIT`) | ✅ yes - the Worker still runs to serve it |
+| Workers Cache (`[cache] enabled = true`) hits | ✅ yes - hits save CPU time only, not the request |
+| A Cache Rule / CDN cache hit on a zone | ✅ yes - Workers run *before* the Cloudflare cache |
+| A request blocked before the Worker (WAF Custom Rule, rate-limit rule, challenge) | ❌ no - it never reaches the Worker |
+| A response the client reuses from `Cache-Control: max-age` | ❌ no - the client never sends the request |
+
+Edge caching therefore cannot shrink the counter. Only two things can:
+
+**1. Let clients reuse responses.** Every successful response is sent with
+`Cache-Control: public, max-age=21600, s-maxage=21600, stale-while-revalidate=86400`,
+so a browser or app that asks for the same URL again within six hours should never
+reach the Worker. Honour that header in your own frontend - it is by far the
+biggest saving available. While testing, add a throwaway parameter (`&_=123`) so
+the URL differs and the client cache is bypassed.
+
+**2. Stop junk traffic before the Worker.** Bind the Worker to a **custom domain**
+on a zone you control: WAF Custom Rules and rate-limiting rules run *before* the
+Worker, so blocked scanners cost nothing. On `workers.dev` there is no zone and
+nothing can run in front of the Worker, so every scanner hit costs one request -
+if you only need your custom domain, switch the public `workers.dev` URL off under
+**Workers & Pages -> your Worker -> Settings -> Domains & Routes**.
+
+Setting an `API_KEY` secret (see
+[Optional: protect your deployment](#optional-protect-your-deployment)) stops
+strangers from running full scrapes against your quota, but a rejected call is
+still one request.
+
+Find out where your requests actually go in **Workers & Pages -> your Worker ->
+Metrics**, and watch live traffic with `npx wrangler tail`.
+
 ## Testing
 
 `node:test` and `node:assert` ship with Node itself, so the tests need no install:
@@ -559,8 +611,8 @@ node test.js
 ```
 
 ```text
-# tests 27
-# pass 27
+# tests 30
+# pass 30
 # fail 0
 ```
 
@@ -577,7 +629,7 @@ spotify-metadata-scraper/
 ├── wrangler.toml          entry point + compatibility date (needed for CLI/Git deploys)
 ├── package.json           pins wrangler@^4 for CI builds; adds npm scripts
 ├── .gitignore
-├── test.js                27 tests, run with `node test.js`
+├── test.js                30 tests, run with `node test.js`
 ├── example-response.json  a real captured response
 ├── README.md
 └── LICENSE
@@ -638,8 +690,6 @@ so you are not hammering Spotify on other people's behalf.
 ## Author
 
 **Thishan Dinujaya**
-
-Live demo: https://spotify-metadata-scraper.dinujayathishan06.workers.dev
 
 ## License
 
