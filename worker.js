@@ -1,94 +1,9 @@
-/**
- * ===================================================================
- *  Spotify Scraper API - single-file Cloudflare Worker
- * ===================================================================
- *
- *  One file. No npm install. No build step. No dependencies.
- *  No API keys. No OAuth. No database. No KV binding.
- *
- *  Returns public Spotify metadata (title, artists, album, duration,
- *  artwork, a 30-second preview URL, embed player links, tracklists)
- *  for any share link - including the messy ones that carry
- *  ?si=...&utm_source=copy-link and /intl/<locale>/ path segments.
- *
- *  -----------------------------------------------------------------
- *  DEPLOY (no terminal required)
- *  -----------------------------------------------------------------
- *   1. dash.cloudflare.com -> Workers & Pages -> Create -> Create Worker
- *   2. Give it a name (e.g. spotify-scraper-api) -> Create
- *   3. Click "Quick edit", delete the template, paste THIS file, Deploy
- *   4. Your API is live at
- *      https://spotify-scraper-api.<your-subdomain>.workers.dev
- *
- *  Deploy from a terminal instead (optional):
- *    npx wrangler deploy worker.js --name spotify-scraper-api \
- *      --compatibility-date 2026-05-01
- *
- *  -----------------------------------------------------------------
- *  ENDPOINTS
- *  -----------------------------------------------------------------
- *   GET      /                       API index (JSON, not a web page)
- *   GET      /health                 status + configuration
- *   GET|POST /api/scrape?url=...     main endpoint
- *   GET|POST /api/embed?url=...      same JSON; &format=html -> iframe page
- *   GET      /api/parse?url=...      explains every query param in a share link
- *   GET      /api/track/:id          shortcut; also album, playlist, artist,
- *                                    episode, show
- *   OPTIONS  *                       CORS preflight
- *
- *  QUERY OPTIONS
- *   ?tracks=1&limit=10   expand album/playlist tracks with per-track detail
- *   ?light=1             skip artist lookups (fastest response)
- *   ?intl=es             force a locale
- *   ?raw=1               include every scraped <meta> tag (debugging)
- *
- *  -----------------------------------------------------------------
- *  FOUR SPOTIFY BEHAVIOURS THIS WORKER HANDLES
- *  (each one silently breaks a naive scraper: you get HTTP 200 and
- *   no data, or a multi-second hang)
- *  -----------------------------------------------------------------
- *   R1  A browser User-Agent gets an empty app shell.
- *       Spotify serves its client-side SPA shell to real browsers, which
- *       contains no og:title, no music:* tags and no og:audio. Link-preview
- *       crawler user agents get the fully pre-rendered SEO page instead.
- *         facebookexternalhit/1.1  -> full metadata
- *         Twitterbot/1.0           -> full metadata
- *         Googlebot/2.1            -> full metadata
- *         Chrome/125 full UA       -> shell only, no metadata
- *       Handled by BOT_USER_AGENTS + looksLikeSeoPage() + UA rotation.
- *
- *   R2  /intl/<locale>/<type>/<id> returns 404 to a fetch, even though a
- *       browser opens it fine. The query form works:
- *         /intl/es/track/<id>  -> 404
- *         /track/<id>?intl=es  -> 200
- *       The locale is parsed out of the path and re-sent as a query
- *       parameter, with a canonical-URL fallback.
- *
- *   R3  A non-existent ID returns HTTP 200 from the page, but 404 from
- *       oEmbed. oEmbed is therefore used as the "not found" oracle.
- *
- *   R4  oEmbed hangs for ~5 seconds and returns HTTP 504 when given an
- *       intl URL:
- *         /oembed?url=.../intl/es/track/<id>  -> 504 after 5.1s
- *         /oembed?url=.../track/<id>          -> 200 after 0.16s
- *       oEmbed is always called with the canonical URL. This alone took a
- *       5290ms request down to 246ms.
- *
- *  -----------------------------------------------------------------
- *  MIT License (c) Thishan Dinujaya
- * ===================================================================
- */
+const PAGE_TTL = 21600;
+const RESPONSE_TTL = 3600;
+const MAX_TRACKS = 25;
+const CORS_ORIGIN = '*';
+const CACHE_ON = true;
 
-/* ---------------------------- Config ---------------------------- */
-/* Override these in Dashboard -> Settings -> Variables and Secrets. */
-
-const PAGE_TTL = 21600;      /* upstream Spotify pages cached for 6 hours */
-const RESPONSE_TTL = 3600;   /* API JSON responses cached for 1 hour */
-const MAX_TRACKS = 25;       /* hard cap for ?tracks=1 */
-const CORS_ORIGIN = '*';     /* set to your own origin to lock it down */
-const CACHE_ON = true;       /* false disables all caching (debugging) */
-
-/** R1: browser user agents receive an empty shell, so use crawler agents. */
 const BOT_USER_AGENTS = [
   'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)',
   'Twitterbot/1.0',
@@ -99,15 +14,12 @@ const RESOURCE_TYPES = new Set(['track', 'album', 'playlist', 'artist', 'episode
 const ID_RE = /^[0-9A-Za-z]{22}$/;
 const VERSION = '2.3.0';
 
-/* ---------------------- HTML / text helpers ---------------------- */
-
 const ENTITIES = {
   amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: '\u00a0',
   ndash: '\u2013', mdash: '\u2014', hellip: '\u2026', middot: '\u00b7',
   rsquo: '\u2019', lsquo: '\u2018', rdquo: '\u201d', ldquo: '\u201c',
 };
 
-/** Decode HTML entities: &amp; &#39; &#x1F600; */
 function decodeHtml(value = '') {
   return String(value)
     .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => codePoint(parseInt(h, 16)))
@@ -120,11 +32,6 @@ function codePoint(n) {
   try { return String.fromCodePoint(n); } catch { return ''; }
 }
 
-/**
- * Every <meta> tag on the page as Map<key, [values]>.
- * Spotify swaps attribute order, so both name/property and both
- * attribute orders are matched. Repeated tags (music:musician) are kept.
- */
 function extractMetas(html) {
   const out = new Map();
   if (typeof html !== 'string') return out;
@@ -144,21 +51,15 @@ function extractMetas(html) {
 const metaOne = (m, k) => m.get(String(k).toLowerCase())?.[0] ?? null;
 const metaAll = (m, k) => m.get(String(k).toLowerCase()) ?? [];
 
-/** First parseable JSON-LD block; malformed blocks are skipped. */
 function extractJsonLd(html) {
   const re = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
   let m;
   while ((m = re.exec(String(html || '')))) {
-    try { const p = JSON.parse(m[1].trim()); if (p && typeof p === 'object') return p; } catch { /* try next block */ }
+    try { const p = JSON.parse(m[1].trim()); if (p && typeof p === 'object') return p; } catch {  }
   }
   return null;
 }
 
-/**
- * Pick the best title.
- * Album pages wrap og:title ("Listen to TURAN 2 - EP by ASTXR | Spotify")
- * while the JSON-LD name is the clean one ("TURAN 2"), so JSON-LD wins.
- */
 function bestTitle(metas, ld, html) {
   const fromLd = typeof ld?.name === 'string' ? ld.name.trim() : '';
   if (fromLd) return fromLd;
@@ -174,7 +75,6 @@ function bestTitle(metas, ld, html) {
   return t ? decodeHtml(t[1]).replace(/\s*[|-]\s*Spotify.*$/i, '').trim() : null;
 }
 
-/** Seconds to "1:42" or "1:02:05". */
 function formatDuration(total) {
   const s = Math.max(0, Math.floor(Number(total) || 0));
   const pad = (n) => String(n).padStart(2, '0');
@@ -182,7 +82,6 @@ function formatDuration(total) {
   return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
 }
 
-/** "933.2K" to 933200. */
 function parseCount(text) {
   if (text == null) return null;
   const m = String(text).match(/([\d.,]+)\s*([KMB])?/i);
@@ -192,23 +91,9 @@ function parseCount(text) {
   return Math.round(n * ({ k: 1e3, m: 1e6, b: 1e9 }[(m[2] || '').toLowerCase()] || 1));
 }
 
-/** "ASTXR, zxguss . TURAN 2 . Song . 2026" into parts (middot separated). */
 const splitDescription = (d) =>
   d ? String(d).split(/\s*[\u00b7\u2022]\s*/).map((s) => s.trim()).filter(Boolean) : [];
 
-/**
- * Cover art size variants.
- *
- * A Spotify image id is prefix(8) + sizeCode(8) + hash(24), and the size
- * codes are NOT interchangeable between prefixes. Building the wrong one
- * yields a 404. Only codes verified with `curl -I` are emitted here:
- *
- *   ab67616d  album/track art  b273=640  1e02=300  4851=64
- *   ab676161  artist           e5eb=750  f178=160  (1e02/4851 -> 404)
- *   ab67706f  playlist cover   only one size exists -> no variants
- *
- * Unknown prefixes return { url } alone rather than inventing dead URLs.
- */
 const VERIFIED_SIZE_CODES = {
   ab67616d: { large: '0000b273', medium: '00001e02', small: '00004851' },
   ab676161: { large: '0000e5eb', small: '0000f178' },
@@ -235,12 +120,6 @@ const pageUrl = (type, id, locale) =>
 const embedUrl = (type, id) => `https://open.spotify.com/embed/${type}/${id}`;
 const spotifyUri = (type, id) => `spotify:${type}:${id}`;
 
-/* -------------------------- Link parsing -------------------------- */
-
-/**
- * What each query parameter in a Spotify share link actually means.
- * Returned by /api/parse so callers can strip the tracking noise.
- */
 const PARAM_NOTES = {
   si: 'Share Identifier - a random token Spotify generates when you tap "Copy Link". Analytics only; it does not affect the resource or its metadata, so it can be removed.',
   utm_source: 'Where the link was shared from (copy-link, whatsapp, instagram...). A marketing/analytics tag; it can be removed.',
@@ -258,13 +137,6 @@ const PARAM_NOTES = {
 };
 const TRACKING_PARAMS = new Set(['si', 'context', 'nd', 'referrer', 'sp_cid']);
 
-/**
- * Normalise any Spotify link shape into { type, id, locale, params }.
- *
- * Supported: open.spotify.com, play.spotify.com, /intl/<locale>/...,
- * /embed/..., spotify.link short links, spotify:track:<id> URIs and a
- * bare 22-character id.
- */
 function parseSpotifyLink(input) {
   const raw = String(input || '').trim();
   if (!raw) return null;
@@ -304,8 +176,6 @@ function parseSpotifyLink(input) {
   return { type, id, locale, params, raw, host };
 }
 
-/* ----------------------------- Errors ----------------------------- */
-
 class ScrapeError extends Error {
   constructor(status, message, extra = {}) {
     super(message);
@@ -313,8 +183,6 @@ class ScrapeError extends Error {
     Object.assign(this, extra);
   }
 }
-
-/* -------------- Caching (Cache API; no KV binding needed) -------------- */
 
 const NOOP_CACHE = { match: async () => undefined, put: async () => {} };
 
@@ -325,11 +193,6 @@ async function openCache(name = 'spotify-scraper-v1') {
   } catch { return NOOP_CACHE; }
 }
 
-/**
- * Cache-through fetch. Keyless scraping should not hit Spotify on every
- * request, so upstream responses are stored in the Workers Cache API
- * under an internal key (tracking params never reach the key).
- */
 async function cachedFetch(ctx, { key, url, headers, ttl, timeout = 15000 }) {
   const cache = await openCache();
   const hit = await cache.match(key).catch(() => undefined);
@@ -354,15 +217,12 @@ async function cachedFetch(ctx, { key, url, headers, ttl, timeout = 15000 }) {
   return { body, status: res.status, cached: false, url: res.url || url };
 }
 
-/* ---------------------- Input normalisation ---------------------- */
-
 async function normalizeInput(input) {
   let parsed = parseSpotifyLink(input);
   if (!parsed) {
     throw new ScrapeError(400, 'Provide a valid Spotify URL, a spotify: URI, or a link containing a 22-character Spotify id.', { code: 'invalid_input' });
   }
 
-  /* spotify.link short links are resolved by following the redirect. */
   if (parsed.needsRedirectResolution) {
     let resolved;
     try {
@@ -401,21 +261,17 @@ async function normalizeInput(input) {
   };
 }
 
-/** R2: fetch the canonical path with the locale as a query parameter. */
 const fetchUrlFor = (r) =>
   r.locale ? `${pageUrl(r.type, r.id)}?intl=${encodeURIComponent(r.locale)}` : pageUrl(r.type, r.id);
 
-/** R1: does this HTML actually contain metadata, or is it the app shell? */
 function looksLikeSeoPage(html) {
   if (typeof html !== 'string' || html.length < 500) return false;
   if (/<title[^>]*>\s*Spotify\s*[\u2013-]\s*Web Player/i.test(html)) return false;
   return /property=["']og:title["']/.test(html) || /name=["']music:duration["']/.test(html) || /application\/ld\+json/.test(html);
 }
 
-/* ------------------------ Upstream sources ------------------------ */
-
 async function getOEmbed(resource, ctx) {
-  /* R4: oEmbed returns HTTP 504 after ~5s for intl URLs, so always use the canonical URL. */
+
   const canonical = pageUrl(resource.type, resource.id);
   const url = `https://open.spotify.com/oembed?url=${encodeURIComponent(canonical)}`;
   const r = await cachedFetch(ctx, {
@@ -426,7 +282,6 @@ async function getOEmbed(resource, ctx) {
     timeout: 8000,
   });
 
-  /* R3: oEmbed 404 is the reliable "this resource does not exist" signal. */
   if (r.status === 404) throw new ScrapeError(404, `Spotify has no ${resource.type} with id '${resource.id}'.`, { code: 'not_found', upstream: 404 });
   if (r.status !== 200) throw new ScrapeError(502, `Spotify oEmbed returned HTTP ${r.status}.`, { code: 'upstream_error', upstream: r.status });
 
@@ -444,7 +299,6 @@ async function getOEmbed(resource, ctx) {
   };
 }
 
-/** R1 + R2: bot user-agent rotation, intl query form, canonical fallback. */
 async function getPage(resource, ctx, ttl = PAGE_TTL) {
   const candidates = [{ url: fetchUrlFor(resource), localeApplied: Boolean(resource.locale) }];
   if (resource.locale) candidates.push({ url: pageUrl(resource.type, resource.id), localeApplied: false });
@@ -471,14 +325,14 @@ async function getPage(resource, ctx, ttl = PAGE_TTL) {
       }
 
       lastStatus = r.status;
-      if (r.status === 404 || r.status === 410) break;   /* this URL shape does not work; try the next candidate */
+      if (r.status === 404 || r.status === 410) break;
       if (r.status === 429) throw new ScrapeError(429, 'Spotify rate limited this request - please retry in about a minute.', { code: 'rate_limited', upstream: 429 });
       if (r.status >= 400) continue;
 
       if (looksLikeSeoPage(r.body)) {
         return { html: r.body, cached: r.cached, localeApplied: cand.localeApplied, user_agent: uaTag, degraded: false };
       }
-      /* HTTP 200 but an app shell (R1): remember it and try the next user agent. */
+
       if (!shellOnly) shellOnly = { html: r.body, cached: r.cached, localeApplied: cand.localeApplied, user_agent: uaTag };
     }
   }
@@ -486,11 +340,9 @@ async function getPage(resource, ctx, ttl = PAGE_TTL) {
   if (lastStatus === 404 || lastStatus === 410) {
     throw new ScrapeError(404, `Spotify has no ${resource.type} with id '${resource.id}'.`, { code: 'not_found', upstream: lastStatus });
   }
-  if (shellOnly) return { ...shellOnly, degraded: true };  /* oEmbed data can still be returned */
+  if (shellOnly) return { ...shellOnly, degraded: true };
   throw new ScrapeError(502, `Could not read the Spotify page for ${resource.type}/${resource.id} (last HTTP ${lastStatus}).`, { code: 'upstream_error', upstream: lastStatus });
 }
-
-/* ------------------------- Entity builders ------------------------- */
 
 function idsFromUrls(urls, want) {
   const out = [], seen = new Set();
@@ -517,7 +369,7 @@ function durationFrom(metas) {
 function buildTrack(resource, html) {
   const metas = extractMetas(html);
   const ld = extractJsonLd(html);
-  const parts = splitDescription(metaOne(metas, 'og:description')); /* artists . album . kind . year */
+  const parts = splitDescription(metaOne(metas, 'og:description'));
   const album = idsFromUrls([metaOne(metas, 'music:album')], 'album')[0] || null;
   const artists = idsFromUrls(metaAll(metas, 'music:musician'), 'artist');
   const trackNumber = parseInt(metaOne(metas, 'music:album:track') || '', 10);
@@ -529,7 +381,6 @@ function buildTrack(resource, html) {
     content_type: metaOne(metas, 'og:type') || 'music.song',
     page_url: metaOne(metas, 'og:url') || resource.url,
 
-    /* og:audio carries a real 30-second preview MP3 - no API key required. */
     preview_url: metaOne(metas, 'og:audio') || null,
     audio_download_url: null,
 
@@ -542,7 +393,7 @@ function buildTrack(resource, html) {
       release_date: metaOne(metas, 'music:release_date') || ld?.datePublished || null,
       available_in: metaAll(metas, 'og:restrictions:country:allowed'),
       images: imageSizes(metaOne(metas, 'og:image')),
-      /* Not present in public HTML; kept as null so client code stays stable. */
+
       isrc: null,
       popularity: null,
       explicit: null,
@@ -559,7 +410,7 @@ function buildAlbum(resource, html) {
   const metas = extractMetas(html);
   const ld = extractJsonLd(html);
   const desc = metaOne(metas, 'og:description') || '';
-  const parts = splitDescription(desc); /* artist . type . year . N songs */
+  const parts = splitDescription(desc);
   const tracks = idsFromUrls(metaAll(metas, 'music:song'), 'track');
   const countMatch = parts.find((p) => /[\d.,]+\s*(songs?|tracks?)/i.test(p))?.match(/([\d.,]+)\s*(songs?|tracks?)/i);
 
@@ -644,7 +495,6 @@ function buildArtist(resource, html) {
   };
 }
 
-/** Generic builder for episode / show and any future resource type. */
 function buildGeneric(resource, html) {
   const metas = extractMetas(html);
   const ld = extractJsonLd(html);
@@ -668,9 +518,6 @@ function buildGeneric(resource, html) {
 
 const BUILDERS = { track: buildTrack, album: buildAlbum, playlist: buildPlaylist, artist: buildArtist };
 
-/* ----------------------- Optional expansion ----------------------- */
-
-/** Fill in artist names and monthly listeners (parallel, cached 24h). */
 async function expandArtists(entity, ctx, limit = 6) {
   const artists = (entity.metadata?.artists || []).filter((a) => !a.name).slice(0, limit);
   if (!artists.length) return entity;
@@ -684,13 +531,12 @@ async function expandArtists(entity, ctx, limit = 6) {
       artist.monthly_listeners = monthly ? parseCount(monthly[1]) : null;
       artist.monthly_listeners_text = monthly ? monthly[1] : null;
     } catch {
-      /* one artist failing must not fail the whole response */
+
     }
   }));
   return entity;
 }
 
-/** ?tracks=1 expands each album/playlist track (parallel, cached). */
 async function expandTracks(entity, ctx, limit) {
   const targets = (entity.metadata?.tracks || []).slice(0, limit);
   if (!targets.length) return entity;
@@ -717,8 +563,6 @@ async function expandTracks(entity, ctx, limit) {
   return entity;
 }
 
-/* --------------------------- Main scrape --------------------------- */
-
 async function scrape(input, ctx, opts = {}) {
   const resource = await normalizeInput(input);
   if (opts.intl) {
@@ -726,7 +570,6 @@ async function scrape(input, ctx, opts = {}) {
     resource.url = pageUrl(resource.type, resource.id, opts.intl);
   }
 
-  /* Both sources in parallel; if one fails the other still answers. */
   const [embedResult, pageResult] = await Promise.allSettled([getOEmbed(resource, ctx), getPage(resource, ctx)]);
   const embed = embedResult.status === 'fulfilled' ? embedResult.value : null;
   const embedError = embedResult.status === 'rejected' ? embedResult.reason : null;
@@ -742,7 +585,6 @@ async function scrape(input, ctx, opts = {}) {
 
   const entity = (BUILDERS[resource.type] || buildGeneric)(resource, page?.html || '');
 
-  /* Fill any gaps from oEmbed (it is the only source when degraded). */
   if (embed) {
     entity.title = entity.title || embed.title;
     entity.thumbnail = entity.thumbnail || embed.thumbnail;
@@ -803,8 +645,6 @@ async function scrape(input, ctx, opts = {}) {
   };
 }
 
-/* --------------------------- /api/parse --------------------------- */
-
 function linkAnalysis(input) {
   const parsed = parseSpotifyLink(input);
   if (!parsed) {
@@ -851,8 +691,6 @@ function linkAnalysis(input) {
   };
 }
 
-/* ------------------------ Response helpers ------------------------ */
-
 function json(data, status = 200, cached = false, extra = {}, pretty = false) {
   return new Response(JSON.stringify(data, null, pretty ? 2 : 0), {
     status,
@@ -896,8 +734,6 @@ function scrapeOptions(url, env) {
   };
 }
 
-/* ------------------------------ Worker ------------------------------ */
-
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -919,120 +755,26 @@ export default {
       return json({ success: false, error: 'Method not allowed.', code: 'method_not_allowed', allowed: 'GET, POST, OPTIONS' }, 405);
     }
 
-    /* ---- API index: JSON, not a web page ---- */
-    /* Every endpoint carries its own absolute URL plus a ready-to-open example,
-       so this page is usable without reading any documentation. */
     if (path === '/' || path === '/index.html') {
-      const base = url.origin;
-      const EXAMPLE = 'https://open.spotify.com/track/1kZvBIepQFlgUywAub2h56';
-      const EXAMPLE_SHARE = 'https://open.spotify.com/track/1kZvBIepQFlgUywAub2h56?si=cq52Cz8HRdGNhNB-P8EfiQ&utm_source=copy-link';
-      const u = (p) => base + p;
-      const ex = (p, link) => u(p) + '?url=' + encodeURIComponent(link);
-
-      return json({
-        success: true,
-        name: 'Spotify Scraper API',
-        version: VERSION,
-        base_url: base,
-        requires_api_key: Boolean(env?.API_KEY),
-        description: 'Keyless public Spotify metadata and embed scraper. Paste any share link - ?si= and utm_* tracking parameters are handled automatically.',
-        how_to_use: 'Open any "example" URL below in a browser, or copy a "url" template and replace the Spotify link with your own.',
-
-        endpoints: [
-          {
-            name: 'scrape',
-            description: 'Main endpoint. Any Spotify link becomes clean JSON metadata.',
-            method: 'GET or POST',
-            path: '/api/scrape',
-            url: u('/api/scrape') + '?url={spotify_link}',
-            supports: 'track, album, playlist, artist, episode, show',
-            example: ex('/api/scrape', EXAMPLE),
-            example_share_link: ex('/api/scrape', EXAMPLE_SHARE),
-            curl: `curl "${ex('/api/scrape', EXAMPLE)}"`,
-            options: [
-              { param: 'tracks=1&limit=10', description: 'Albums/playlists: add per-track title, artists, duration and preview.', example: ex('/api/scrape', 'https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M') + '&tracks=1&limit=5' },
-              { param: 'light=1', description: 'Skip artist lookups for the fastest response (artist names stay null).', example: ex('/api/scrape', EXAMPLE) + '&light=1' },
-              { param: 'intl=es', description: 'Force a locale. Also detected automatically from /intl/<locale>/ links.', example: ex('/api/scrape', EXAMPLE) + '&intl=es' },
-              { param: 'raw=1', description: 'Include every scraped <meta> tag. Useful for debugging.', example: ex('/api/scrape', EXAMPLE) + '&raw=1' },
-            ],
-          },
-          {
-            name: 'embed',
-            description: 'Same JSON as /api/scrape. Add &format=html for a page containing only the Spotify player iframe.',
-            method: 'GET or POST',
-            path: '/api/embed',
-            url: u('/api/embed') + '?url={spotify_link}',
-            example: ex('/api/embed', EXAMPLE),
-            example_iframe: ex('/api/embed', EXAMPLE) + '&format=html',
-            curl: `curl "${ex('/api/embed', EXAMPLE)}&format=html"`,
-          },
-          {
-            name: 'parse',
-            description: 'Breaks a share link down and explains every query parameter (si, utm_source, context, intl...). Tells you which ones are safe to delete.',
-            method: 'GET',
-            path: '/api/parse',
-            url: u('/api/parse') + '?url={spotify_link}',
-            example: ex('/api/parse', EXAMPLE_SHARE),
-            curl: `curl "${ex('/api/parse', EXAMPLE_SHARE)}"`,
-          },
-          {
-            name: 'shortcut',
-            description: 'Direct lookup by resource type and id, no URL encoding needed.',
-            method: 'GET',
-            path: '/api/{type}/{id}',
-            url: u('/api/{type}/{id}'),
-            types: {
-              track: u('/api/track/1kZvBIepQFlgUywAub2h56'),
-              album: u('/api/album/4ntJgEVBlc3K4SWfKCQ7PS'),
-              playlist: u('/api/playlist/37i9dQZF1DXcBWIGoYBM5M'),
-              artist: u('/api/artist/0rBrjQPcLqHj1Jk8Jvw7Xj'),
-            },
-            example: u('/api/track/1kZvBIepQFlgUywAub2h56'),
-          },
-          {
-            name: 'health',
-            description: 'Status and configuration. Stays public even when an API key is set, so uptime monitors keep working.',
-            method: 'GET',
-            path: '/health',
-            url: u('/health'),
-            example: u('/health'),
-          },
-        ],
-
-        try_these: [
-          { label: 'Track (the link the Spotify app copies, tracking params included)', url: ex('/api/scrape', EXAMPLE_SHARE) },
-          { label: 'Track with a /intl/es/ path segment', url: ex('/api/scrape', 'https://open.spotify.com/intl/es/track/1kZvBIepQFlgUywAub2h56') },
-          { label: 'Album with its tracklist', url: ex('/api/scrape', 'https://open.spotify.com/album/4ntJgEVBlc3K4SWfKCQ7PS') },
-          { label: 'Artist with monthly listeners', url: u('/api/artist/0rBrjQPcLqHj1Jk8Jvw7Xj') },
-          { label: 'Playlist with per-track detail', url: ex('/api/scrape', 'https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M') + '&tracks=1&limit=5' },
-          { label: 'What does ?si= actually mean?', url: ex('/api/parse', EXAMPLE_SHARE) },
-          { label: 'Paste-ready player iframe', url: ex('/api/embed', EXAMPLE) + '&format=html' },
-        ],
-
-        supported_types: [...RESOURCE_TYPES],
-        accepted_inputs: [
-          'https://open.spotify.com/track/<id>',
-          'https://open.spotify.com/intl/es/track/<id>?si=...&utm_source=copy-link',
-          'https://open.spotify.com/embed/album/<id>',
-          'https://play.spotify.com/artist/<id>',
-          'https://spotify.link/<code>   (short link, resolved by following the redirect)',
-          'spotify:track:<id>',
-          '<id>   (22 characters, but then the type cannot be inferred - send a full link)',
-        ],
-        response_shape: {
-          title: 'Resource name (clean; JSON-LD is preferred over the wrapped og:title)',
-          thumbnail: 'Artwork URL',
-          metadata: 'Deep fields: artists, album, duration, release_date, images, available_in, tracks...',
-          preview_url: 'A real 30-second preview MP3 when Spotify publishes one (tracks only)',
-          audio_download_url: 'Always null - this API never downloads full tracks or bypasses DRM',
-          embed_url: 'Spotify player iframe src',
-          engine: 'Which upstream sources answered',
-          cached: 'true when served from the Workers edge cache',
+      const lines = [
+        'Spotify Scraper API v' + VERSION,
+        '',
+        'GET /api/scrape?url=<spotify link>',
+        'GET /api/embed?url=<spotify link>       add &format=html for an iframe page',
+        'GET /api/parse?url=<spotify link>',
+        'GET /api/track/<id>                     also album, playlist, artist, episode, show',
+        'GET /health',
+        '',
+        'options: tracks=1  limit=10  light=1  intl=es  raw=1',
+      ];
+      return new Response(lines.join('\n') + '\n', {
+        status: 200,
+        headers: {
+          'content-type': 'text/plain; charset=utf-8',
+          'access-control-allow-origin': CORS_ORIGIN,
+          'cache-control': 'public, max-age=300',
         },
-        errors: { shape: '{ "success": false, "error": "...", "code": "..." }', codes: ['invalid_input', 'unsupported_type', 'invalid_id', 'missing_url', 'bad_json', 'unauthorized', 'not_found', 'rate_limited', 'upstream_error', 'upstream_timeout'] },
-        docs: 'See README.md in the repository for the full field list and limitations.',
-        license: 'MIT (c) Thishan Dinujaya',
-      }, 200, true, {}, true);
+      });
     }
 
     if (path === '/health') {
@@ -1050,8 +792,6 @@ export default {
       }, 200, true, { 'cache-control': 'public, max-age=60' });
     }
 
-    /* Optional protection: set an API_KEY secret in the dashboard to enable it.
-       '/' and '/health' stay public so uptime monitors keep working. */
     if (env?.API_KEY) {
       const got = request.headers.get('x-api-key') ||
         request.headers.get('authorization')?.replace(/^Bearer\s+/i, '') ||
@@ -1099,7 +839,6 @@ export default {
         return json(result, 200, result.cached);
       }
 
-      /* Shortcut routes: /api/track/<id> and friends */
       const m = path.match(/^\/api\/(track|album|playlist|artist|episode|show)\/([0-9A-Za-z]{22})$/);
       if (m) {
         const intl = url.searchParams.get('intl');

@@ -1,21 +1,3 @@
-/**
- * test.js - zero-dependency test runner.
- *
- * Run it with plain Node, no npm install required:
- *
- *     node test.js
- *
- * `node:test` and `node:assert` ship with Node itself (18+), and the worker
- * has no runtime dependencies - which is why the whole project can also be
- * pasted straight into the Cloudflare dashboard.
- *
- * Two parts:
- *   PART 1 - offline unit tests (no network)
- *   PART 2 - live tests (real requests to public Spotify pages)
- *
- * MIT License (c) Thishan Dinujaya
- */
-
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import worker from './worker.js';
@@ -23,7 +5,6 @@ import worker from './worker.js';
 const ID = '1kZvBIepQFlgUywAub2h56';
 const SHARE = `https://open.spotify.com/track/${ID}?si=cq52Cz8HRdGNhNB-P8EfiQ&utm_source=copy-link`;
 
-/** Send a request through the worker and parse the JSON response. */
 async function call(path, method = 'GET') {
   const res = await worker.fetch(new Request('https://spotify-api.local' + path, { method }), {}, {});
   const text = await res.text();
@@ -32,46 +13,30 @@ async function call(path, method = 'GET') {
   return { status: res.status, body, res };
 }
 
-/* =============== PART 1 - offline (no network needed) =============== */
-
-test('/ returns a JSON API index with absolute URLs and examples', async () => {
-  const { status, body, res } = await call('/');
-  assert.equal(status, 200);
-  assert.equal(res.headers.get('content-type'), 'application/json; charset=utf-8');
-  assert.equal(body.requires_api_key, false);
-  assert.equal(body.base_url, 'https://spotify-api.local');
-  assert.equal(body.license, 'MIT (c) Thishan Dinujaya');
-
-  /* Endpoints are a structured list, each with its own absolute URL + example. */
-  assert.ok(Array.isArray(body.endpoints), 'endpoints is an array');
-  assert.ok(body.endpoints.length >= 5, 'at least 5 documented endpoints');
-  for (const e of body.endpoints) {
-    assert.ok(e.name && e.path && e.url, `endpoint ${e.name} has name/path/url`);
-    assert.ok(e.url.startsWith('https://spotify-api.local/'), `${e.name} url is absolute: ${e.url}`);
-    assert.ok(e.example?.startsWith('https://'), `${e.name} example is an absolute URL: ${e.example}`);
-    assert.ok(e.description, `${e.name} has a description`);
-  }
-  const scrape = body.endpoints.find((e) => e.name === 'scrape');
-  assert.ok(scrape.example.includes('url=https%3A%2F%2Fopen.spotify.com'), 'scrape example carries an encoded Spotify link');
-  assert.ok(scrape.curl.startsWith('curl "http'), 'scrape ships a copy-paste curl command');
-  assert.ok(scrape.options.length >= 4, 'query options documented');
-  for (const o of scrape.options) assert.ok(o.example.startsWith('https://'), `option ${o.param} has an example URL`);
-
-  /* "try_these" is a ready-to-click list. */
-  assert.ok(body.try_these.length >= 6);
-  for (const t of body.try_these) {
-    assert.ok(t.label && t.url.startsWith('https://spotify-api.local/'), `try_these entry is absolute: ${t.label}`);
-  }
-
-  assert.deepEqual(body.supported_types, ['track', 'album', 'playlist', 'artist', 'episode', 'show']);
-  assert.ok(body.accepted_inputs.some((s) => s.includes('spotify.link')), 'short links documented');
-  assert.ok(body.response_shape.preview_url, 'response fields documented');
-});
-
-test('/ is pretty-printed so it is readable in a browser', async () => {
+test('/ returns a short plain-text index of 10 lines or fewer', async () => {
   const res = await worker.fetch(new Request('https://spotify-api.local/'), {}, {});
   const text = await res.text();
-  assert.ok(text.includes('\n  "name"'), 'indented JSON');
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type'), /text\/plain/);
+
+  const lines = text.split('\n');
+  if (lines[lines.length - 1] === '') lines.pop();
+  assert.ok(lines.length <= 10, `expected 10 lines or fewer, got ${lines.length}`);
+  assert.ok(text.length < 600, `expected a short body, got ${text.length} bytes`);
+
+  assert.match(text, /Spotify Scraper API v\d/);
+  for (const p of ['/api/scrape', '/api/embed', '/api/parse', '/api/track', '/health']) {
+    assert.ok(text.includes(p), `mentions ${p}`);
+  }
+  assert.ok(!text.includes('{'), 'plain text, not JSON');
+});
+
+test('API responses stay full-size (only / is shortened)', async () => {
+  const { body } = await call('/api/scrape?url=' + encodeURIComponent(`https://open.spotify.com/track/${ID}?light=1`));
+  const size = JSON.stringify(body).length;
+  assert.ok(size > 1500, `scrape response should stay detailed, got ${size} bytes`);
+  assert.ok(body.metadata.artists, 'metadata intact');
+  assert.ok(body.embed_html, 'embed_html intact');
 });
 
 test('/health reports the base URL and stays public', async () => {
@@ -154,8 +119,6 @@ test('worker source is pure ASCII (safe to paste in the dashboard editor)', asyn
   assert.deepEqual(nonAscii, [], `found non-ASCII characters: ${JSON.stringify([...new Set(nonAscii)])}`);
 });
 
-/* ================== PART 2 - live (real Spotify) ================== */
-
 test('share link with ?si= and utm_source returns full metadata', async () => {
   const { status, body } = await call('/api/scrape?url=' + encodeURIComponent(SHARE));
   assert.equal(status, 200);
@@ -212,7 +175,7 @@ test('artist returns parsed monthly listeners and correct image sizes', async ()
   assert.equal(body.title, 'ASTXR');
   assert.ok(body.metadata.monthly_listeners > 10000, 'monthly_listeners parsed');
   assert.equal(body.metadata.monthly_listeners_text, '933.2K');
-  /* Artist artwork uses prefix ab676161: e5eb=750 and f178=160 exist, 300px does not. */
+
   assert.equal(body.metadata.images.prefix, 'ab676161');
   assert.match(body.metadata.images.large, /0000e5eb/);
   assert.match(body.metadata.images.small, /0000f178/);
@@ -275,7 +238,7 @@ test('repeat requests are served stably and carry an x-cache header', async () =
   const second = await call(p);
   assert.equal(second.status, 200);
   assert.equal(second.body.title, 'TURAN 2 - Slowed');
-  /* Node has no Cache API, so this is always MISS here; on Workers it flips to HIT. */
+
   assert.ok(['HIT', 'MISS'].includes(second.res.headers.get('x-cache')));
 });
 
@@ -339,7 +302,6 @@ test('the optional API_KEY secret is enforced when set', async () => {
   );
   assert.equal(bearer.status, 200);
 
-  /* '/' and '/health' stay public so uptime monitors keep working. */
   const health = await worker.fetch(new Request('https://x/health'), env, {});
   assert.equal(health.status, 200);
   assert.equal((await health.json()).auth, 'api_key');

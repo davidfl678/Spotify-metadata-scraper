@@ -9,7 +9,7 @@
 [![No API key](https://img.shields.io/badge/API%20key-not%20required-1db954?style=for-the-badge)](#no-api-keys-really)
 [![Zero dependencies](https://img.shields.io/badge/dependencies-0-5965f2?style=for-the-badge)](#project-structure)
 [![Single file](https://img.shields.io/badge/deploy-paste%20one%20file-ff69b4?style=for-the-badge)](#quick-start)
-[![Tests](https://img.shields.io/badge/tests-25%20passing-brightgreen?style=for-the-badge)](#testing)
+[![Tests](https://img.shields.io/badge/tests-27%20passing-brightgreen?style=for-the-badge)](#testing)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2ea44f?style=for-the-badge)](./LICENSE)
 
 ### Tracks · Albums · Playlists · Artists · Shows · Episodes
@@ -18,7 +18,7 @@
 
 <br />
 
-[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/YOUR_GITHUB_USERNAME/spotify-scraper-api)
+[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/YOUR_GITHUB_USERNAME/spotify-metadata-scraper)
 
 </div>
 
@@ -90,13 +90,13 @@ npx wrangler deploy
 Then:
 
 ```bash
-curl "https://YOUR-WORKER.workers.dev/api/scrape?url=https://open.spotify.com/track/1kZvBIepQFlgUywAub2h56"
+curl "https://spotify-metadata-scraper.dinujayathishan06.workers.dev/api/scrape?url=https://open.spotify.com/track/1kZvBIepQFlgUywAub2h56"
 ```
 
 The exact link the Spotify app copies works too — tracking parameters are stripped automatically:
 
 ```bash
-curl "https://YOUR-WORKER.workers.dev/api/scrape?url=https%3A%2F%2Fopen.spotify.com%2Ftrack%2F1kZvBIepQFlgUywAub2h56%3Fsi%3Dcq52Cz8HRdGNhNB-P8EfiQ%26utm_source%3Dcopy-link"
+curl "https://spotify-metadata-scraper.dinujayathishan06.workers.dev/api/scrape?url=https%3A%2F%2Fopen.spotify.com%2Ftrack%2F1kZvBIepQFlgUywAub2h56%3Fsi%3Dcq52Cz8HRdGNhNB-P8EfiQ%26utm_source%3Dcopy-link"
 ```
 
 ## Endpoints
@@ -114,7 +114,7 @@ Supported types: `track`, `album`, `playlist`, `artist`, `show`, `episode`.
 ### `POST /api/scrape`
 
 ```bash
-curl -X POST "https://YOUR-WORKER.workers.dev/api/scrape" \
+curl -X POST "https://spotify-metadata-scraper.dinujayathishan06.workers.dev/api/scrape" \
   -H "Content-Type: application/json" \
   -d '{"url":"https://open.spotify.com/track/1kZvBIepQFlgUywAub2h56"}'
 ```
@@ -138,9 +138,47 @@ Shortcuts for `/api/scrape`: `/api/track/1kZvBIepQFlgUywAub2h56`,
 
 ### `GET /` and `GET /health`
 
-Both return **JSON**, not a web page. `/` is the API index; `/health` reports
-status and configuration. They stay public even when an API key is set, so
-uptime monitors keep working.
+Both stay public even when an API key is set, so uptime monitors keep working.
+
+`/` returns a **short plain-text index** — ten lines or fewer, no JSON to wade
+through:
+
+```text
+Spotify Scraper API v2.3.0
+
+GET /api/scrape?url=<spotify link>
+GET /api/embed?url=<spotify link>       add &format=html for an iframe page
+GET /api/parse?url=<spotify link>
+GET /api/track/<id>                     also album, playlist, artist, episode, show
+GET /health
+
+options: tracks=1  limit=10  light=1  intl=es  raw=1
+```
+
+```bash
+curl "https://spotify-metadata-scraper.dinujayathishan06.workers.dev/"
+```
+
+Only the index is shortened. `/api/*` responses keep every field — a track
+response is still around 3.5 KB of full metadata.
+
+`/health` returns compact JSON: status, version, `base_url`, auth mode, cache
+settings and supported types.
+
+```json
+{
+  "success": true,
+  "name": "Spotify Scraper API",
+  "version": "2.3.0",
+  "base_url": "https://spotify-metadata-scraper.dinujayathishan06.workers.dev",
+  "api_index": "https://spotify-metadata-scraper.dinujayathishan06.workers.dev/",
+  "requires_api_key": false,
+  "auth": "public",
+  "cache": "on (pages 21600s, responses 3600s)",
+  "supported_types": ["track", "album", "playlist", "artist", "episode", "show"],
+  "license": "MIT (c) Thishan Dinujaya"
+}
+```
 
 ### Query options
 
@@ -218,7 +256,7 @@ Short version: **tracking noise that you can delete.**
 Ask the API instead of guessing:
 
 ```bash
-curl "https://YOUR-WORKER.workers.dev/api/parse?url=https%3A%2F%2Fopen.spotify.com%2Ftrack%2F1kZvBIepQFlgUywAub2h56%3Fsi%3Dcq52Cz8HRdGNhNB-P8EfiQ%26utm_source%3Dcopy-link"
+curl "https://spotify-metadata-scraper.dinujayathishan06.workers.dev/api/parse?url=https%3A%2F%2Fopen.spotify.com%2Ftrack%2F1kZvBIepQFlgUywAub2h56%3Fsi%3Dcq52Cz8HRdGNhNB-P8EfiQ%26utm_source%3Dcopy-link"
 ```
 
 ```json
@@ -353,9 +391,9 @@ user-agent rotation usually resolves it.
 ### 1. Deploy with the dashboard (no terminal needed)
 
 1. Go to [dash.cloudflare.com](https://dash.cloudflare.com) → **Workers & Pages** → **Create** → **Create Worker**
-2. Name it (for example `spotify-scraper-api`) → **Create**
+2. Name it (for example `spotify-metadata-scraper`) → **Create**
 3. Click **Quick edit**, delete the template code, **paste the entire contents of [`worker.js`](./worker.js)** → **Deploy**
-4. Copy your new URL: `https://spotify-scraper-api.<your-subdomain>.workers.dev`
+4. Copy your new URL: `https://spotify-metadata-scraper.dinujayathishan06.workers.dev`
 
 That is the whole deployment. There is nothing to install and nothing to build,
 and `worker.js` is pure ASCII so the dashboard editor detects it as valid
@@ -375,7 +413,7 @@ This repository already contains the two files that build needs:
 
 | File | Why it is required |
 | --- | --- |
-| `wrangler.toml` | Tells Wrangler **which file to upload** (`main = "worker.js"`) and which `compatibility_date` to use |
+| `wrangler.toml` | Tells Wrangler **which file to upload** (`main = "worker.js"`), which Worker name to deploy to, and which `compatibility_date` to use |
 | `package.json` | Pins `wrangler@^4` so the build does not install an outdated 3.x release |
 
 Without `wrangler.toml` the build fails like this:
@@ -428,7 +466,7 @@ npx wrangler deploy
 needed. To deploy without that file at all, pass everything on the command line:
 
 ```bash
-npx wrangler deploy worker.js --name spotify-scraper-api --compatibility-date 2025-01-01
+npx wrangler deploy worker.js --name spotify-metadata-scraper --compatibility-date 2025-01-01
 ```
 
 Run it locally first:
@@ -463,7 +501,7 @@ curl "http://localhost:8785/api/scrape?url=https%3A%2F%2Fopen.spotify.com%2Ftrac
 **Secret**, name it `API_KEY`, give it a value, and save. Clients must then send:
 
 ```bash
-curl "https://YOUR-WORKER.workers.dev/api/scrape?url=…" -H "x-api-key: YOUR_SECRET"
+curl "https://spotify-metadata-scraper.dinujayathishan06.workers.dev/api/scrape?url=…" -H "x-api-key: YOUR_SECRET"
 ```
 
 `Authorization: Bearer YOUR_SECRET` and `?key=YOUR_SECRET` also work. With no
@@ -481,8 +519,8 @@ node test.js
 ```
 
 ```text
-# tests 25
-# pass 25
+# tests 27
+# pass 27
 # fail 0
 ```
 
@@ -494,7 +532,7 @@ re-run before concluding that the worker is broken.
 ## Project structure
 
 ```text
-spotify-scraper-api/
+spotify-metadata-scraper/
 ├── worker.js              the entire API - paste this into Cloudflare
 ├── wrangler.toml          entry point + compatibility date (needed for CLI/Git deploys)
 ├── package.json           pins wrangler@^4 for CI builds; adds npm scripts
@@ -557,6 +595,10 @@ not legal advice.
 If you deploy this publicly, please leave caching enabled (it is on by default)
 so you are not hammering Spotify on other people's behalf.
 
+## Author
+
+**Thishan Dinujaya**
+
 ## License
 
-MIT License. See [`LICENSE`](./LICENSE).
+MIT License (c) Thishan Dinujaya. See [`LICENSE`](./LICENSE).
