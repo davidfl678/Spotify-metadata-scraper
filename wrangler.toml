@@ -1,38 +1,7 @@
-# -------------------------------------------------------------
-#  Wrangler configuration
-#
-#  This file is what tells `wrangler deploy` WHICH file to upload.
-#  Without it you get:
-#     [ERROR] Missing entry-point to Worker script or to assets directory
-#
-#  The whole API lives in worker.js - a single file, no build step.
-# -------------------------------------------------------------
-
-name = "spotify-scraper-api"
+name = "spotify-metadata-scraper"
 main = "worker.js"
-
-# WARNING:  Keep this date OLD on purpose.
-#
-# Cloudflare's Git-integrated builds may install an older wrangler (the log
-# showed wrangler 3.114.17), and a compatibility_date newer than the bundled
-# workerd supports makes the runtime refuse to start:
-#
-#   [ERROR] This Worker requires compatibility date "2026-10-27", but the
-#     newest date supported by this server binary is "2026-05-03".
-#
-# 2025-01-01 works on wrangler 3.x AND 4.x, and this Worker uses nothing that
-# needs a newer date. Only raise it if you deliberately need a newer feature.
 compatibility_date = "2025-01-01"
-
-# Gives you https://spotify-scraper-api.<your-subdomain>.workers.dev
 workers_dev = true
 
 [observability]
 enabled = true
-
-# -- Optional settings (all have safe defaults inside worker.js) -----
-# [vars]
-# MAX_TRACKS = "25"
-#
-# Secrets are added from the dashboard (Settings -> Variables and Secrets)
-# or with:  npx wrangler secret put API_KEY
