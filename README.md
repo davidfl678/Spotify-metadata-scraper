@@ -25,7 +25,7 @@
 ---
 
 > **Before you publish:** update the deploy button URL above to your own
-> `github.com/<username>/<repository>` path, otherwise it will deploy someone
+> `https://github.com/davidfl678/Spotify-metadata-scraper` path, otherwise it will deploy someone
 > else's repository.
 
 > **Your URL, not the author's:** this repository contains **no hard-coded
