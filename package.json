@@ -1,10 +1,10 @@
 {
   "name": "spotify-scraper-api",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "A single-file, keyless serverless API for public Spotify metadata and embeddable player links. Runs on Cloudflare Workers with zero runtime dependencies.",
   "type": "module",
   "main": "worker.js",
-  "author": "Thisan Dinujaya",
+  "author": "Thishan Dinujaya",
   "license": "MIT",
   "keywords": [
     "spotify",

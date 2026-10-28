@@ -75,7 +75,7 @@
  *       5290ms request down to 246ms.
  *
  *  -----------------------------------------------------------------
- *  MIT License (c) Thisan Dinujaya
+ *  MIT License (c) Thishan Dinujaya
  * ===================================================================
  */
 
@@ -97,7 +97,7 @@ const BOT_USER_AGENTS = [
 
 const RESOURCE_TYPES = new Set(['track', 'album', 'playlist', 'artist', 'episode', 'show']);
 const ID_RE = /^[0-9A-Za-z]{22}$/;
-const VERSION = '2.2.0';
+const VERSION = '2.3.0';
 
 /* ---------------------- HTML / text helpers ---------------------- */
 
@@ -853,8 +853,8 @@ function linkAnalysis(input) {
 
 /* ------------------------ Response helpers ------------------------ */
 
-function json(data, status = 200, cached = false, extra = {}) {
-  return new Response(JSON.stringify(data), {
+function json(data, status = 200, cached = false, extra = {}, pretty = false) {
+  return new Response(JSON.stringify(data, null, pretty ? 2 : 0), {
     status,
     headers: {
       'content-type': 'application/json; charset=utf-8',
@@ -920,30 +920,119 @@ export default {
     }
 
     /* ---- API index: JSON, not a web page ---- */
+    /* Every endpoint carries its own absolute URL plus a ready-to-open example,
+       so this page is usable without reading any documentation. */
     if (path === '/' || path === '/index.html') {
+      const base = url.origin;
+      const EXAMPLE = 'https://open.spotify.com/track/1kZvBIepQFlgUywAub2h56';
+      const EXAMPLE_SHARE = 'https://open.spotify.com/track/1kZvBIepQFlgUywAub2h56?si=cq52Cz8HRdGNhNB-P8EfiQ&utm_source=copy-link';
+      const u = (p) => base + p;
+      const ex = (p, link) => u(p) + '?url=' + encodeURIComponent(link);
+
       return json({
         success: true,
         name: 'Spotify Scraper API',
         version: VERSION,
-        requires_api_key: false,
-        description: 'Keyless public Spotify metadata and embed scraper. Paste any share link - ?si= and utm_* parameters are handled automatically.',
-        endpoints: {
-          '/api/scrape?url=<spotify link>': 'Main endpoint: track, album, playlist, artist, episode, show',
-          '/api/embed?url=<spotify link>': 'Same JSON; add &format=html for a paste-ready iframe page',
-          '/api/parse?url=<spotify link>': 'Explains what ?si= and utm_* in a share link actually mean',
-          '/api/track/:id': 'Shortcut; also /api/album/:id, /api/playlist/:id, /api/artist/:id, /api/episode/:id, /api/show/:id',
-          '/health': 'Status and configuration',
-        },
-        options: {
-          'tracks=1&limit=10': 'Expand album/playlist tracks with per-track detail',
-          'light=1': 'Skip artist lookups for the fastest response',
-          'intl=es': 'Force a locale',
-          'raw=1': 'Include every scraped <meta> tag (debugging)',
-        },
+        base_url: base,
+        requires_api_key: Boolean(env?.API_KEY),
+        description: 'Keyless public Spotify metadata and embed scraper. Paste any share link - ?si= and utm_* tracking parameters are handled automatically.',
+        how_to_use: 'Open any "example" URL below in a browser, or copy a "url" template and replace the Spotify link with your own.',
+
+        endpoints: [
+          {
+            name: 'scrape',
+            description: 'Main endpoint. Any Spotify link becomes clean JSON metadata.',
+            method: 'GET or POST',
+            path: '/api/scrape',
+            url: u('/api/scrape') + '?url={spotify_link}',
+            supports: 'track, album, playlist, artist, episode, show',
+            example: ex('/api/scrape', EXAMPLE),
+            example_share_link: ex('/api/scrape', EXAMPLE_SHARE),
+            curl: `curl "${ex('/api/scrape', EXAMPLE)}"`,
+            options: [
+              { param: 'tracks=1&limit=10', description: 'Albums/playlists: add per-track title, artists, duration and preview.', example: ex('/api/scrape', 'https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M') + '&tracks=1&limit=5' },
+              { param: 'light=1', description: 'Skip artist lookups for the fastest response (artist names stay null).', example: ex('/api/scrape', EXAMPLE) + '&light=1' },
+              { param: 'intl=es', description: 'Force a locale. Also detected automatically from /intl/<locale>/ links.', example: ex('/api/scrape', EXAMPLE) + '&intl=es' },
+              { param: 'raw=1', description: 'Include every scraped <meta> tag. Useful for debugging.', example: ex('/api/scrape', EXAMPLE) + '&raw=1' },
+            ],
+          },
+          {
+            name: 'embed',
+            description: 'Same JSON as /api/scrape. Add &format=html for a page containing only the Spotify player iframe.',
+            method: 'GET or POST',
+            path: '/api/embed',
+            url: u('/api/embed') + '?url={spotify_link}',
+            example: ex('/api/embed', EXAMPLE),
+            example_iframe: ex('/api/embed', EXAMPLE) + '&format=html',
+            curl: `curl "${ex('/api/embed', EXAMPLE)}&format=html"`,
+          },
+          {
+            name: 'parse',
+            description: 'Breaks a share link down and explains every query parameter (si, utm_source, context, intl...). Tells you which ones are safe to delete.',
+            method: 'GET',
+            path: '/api/parse',
+            url: u('/api/parse') + '?url={spotify_link}',
+            example: ex('/api/parse', EXAMPLE_SHARE),
+            curl: `curl "${ex('/api/parse', EXAMPLE_SHARE)}"`,
+          },
+          {
+            name: 'shortcut',
+            description: 'Direct lookup by resource type and id, no URL encoding needed.',
+            method: 'GET',
+            path: '/api/{type}/{id}',
+            url: u('/api/{type}/{id}'),
+            types: {
+              track: u('/api/track/1kZvBIepQFlgUywAub2h56'),
+              album: u('/api/album/4ntJgEVBlc3K4SWfKCQ7PS'),
+              playlist: u('/api/playlist/37i9dQZF1DXcBWIGoYBM5M'),
+              artist: u('/api/artist/0rBrjQPcLqHj1Jk8Jvw7Xj'),
+            },
+            example: u('/api/track/1kZvBIepQFlgUywAub2h56'),
+          },
+          {
+            name: 'health',
+            description: 'Status and configuration. Stays public even when an API key is set, so uptime monitors keep working.',
+            method: 'GET',
+            path: '/health',
+            url: u('/health'),
+            example: u('/health'),
+          },
+        ],
+
+        try_these: [
+          { label: 'Track (the link the Spotify app copies, tracking params included)', url: ex('/api/scrape', EXAMPLE_SHARE) },
+          { label: 'Track with a /intl/es/ path segment', url: ex('/api/scrape', 'https://open.spotify.com/intl/es/track/1kZvBIepQFlgUywAub2h56') },
+          { label: 'Album with its tracklist', url: ex('/api/scrape', 'https://open.spotify.com/album/4ntJgEVBlc3K4SWfKCQ7PS') },
+          { label: 'Artist with monthly listeners', url: u('/api/artist/0rBrjQPcLqHj1Jk8Jvw7Xj') },
+          { label: 'Playlist with per-track detail', url: ex('/api/scrape', 'https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M') + '&tracks=1&limit=5' },
+          { label: 'What does ?si= actually mean?', url: ex('/api/parse', EXAMPLE_SHARE) },
+          { label: 'Paste-ready player iframe', url: ex('/api/embed', EXAMPLE) + '&format=html' },
+        ],
+
         supported_types: [...RESOURCE_TYPES],
-        example: '/api/scrape?url=https://open.spotify.com/track/1kZvBIepQFlgUywAub2h56',
-        license: 'MIT',
-      }, 200, true);
+        accepted_inputs: [
+          'https://open.spotify.com/track/<id>',
+          'https://open.spotify.com/intl/es/track/<id>?si=...&utm_source=copy-link',
+          'https://open.spotify.com/embed/album/<id>',
+          'https://play.spotify.com/artist/<id>',
+          'https://spotify.link/<code>   (short link, resolved by following the redirect)',
+          'spotify:track:<id>',
+          '<id>   (22 characters, but then the type cannot be inferred - send a full link)',
+        ],
+        response_shape: {
+          title: 'Resource name (clean; JSON-LD is preferred over the wrapped og:title)',
+          thumbnail: 'Artwork URL',
+          metadata: 'Deep fields: artists, album, duration, release_date, images, available_in, tracks...',
+          preview_url: 'A real 30-second preview MP3 when Spotify publishes one (tracks only)',
+          audio_download_url: 'Always null - this API never downloads full tracks or bypasses DRM',
+          embed_url: 'Spotify player iframe src',
+          engine: 'Which upstream sources answered',
+          cached: 'true when served from the Workers edge cache',
+        },
+        errors: { shape: '{ "success": false, "error": "...", "code": "..." }', codes: ['invalid_input', 'unsupported_type', 'invalid_id', 'missing_url', 'bad_json', 'unauthorized', 'not_found', 'rate_limited', 'upstream_error', 'upstream_timeout'] },
+        docs: 'See README.md in the repository for the full field list and limitations.',
+        license: 'MIT (c) Thishan Dinujaya',
+      }, 200, true, {}, true);
     }
 
     if (path === '/health') {
@@ -951,11 +1040,13 @@ export default {
         success: true,
         name: 'Spotify Scraper API',
         version: VERSION,
-        requires_api_key: false,
+        base_url: url.origin,
+        api_index: url.origin + '/',
+        requires_api_key: Boolean(env?.API_KEY),
         auth: env?.API_KEY ? 'api_key' : 'public',
         cache: CACHE_ON ? `on (pages ${PAGE_TTL}s, responses ${RESPONSE_TTL}s)` : 'off',
         supported_types: [...RESOURCE_TYPES],
-        license: 'MIT',
+        license: 'MIT (c) Thishan Dinujaya',
       }, 200, true, { 'cache-control': 'public, max-age=60' });
     }
 

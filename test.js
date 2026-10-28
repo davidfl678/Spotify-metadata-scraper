@@ -13,7 +13,7 @@
  *   PART 1 - offline unit tests (no network)
  *   PART 2 - live tests (real requests to public Spotify pages)
  *
- * MIT License (c) Thisan Dinujaya
+ * MIT License (c) Thishan Dinujaya
  */
 
 import { test } from 'node:test';
@@ -34,13 +34,51 @@ async function call(path, method = 'GET') {
 
 /* =============== PART 1 - offline (no network needed) =============== */
 
-test('/ returns a JSON API index, not a web page', async () => {
+test('/ returns a JSON API index with absolute URLs and examples', async () => {
   const { status, body, res } = await call('/');
   assert.equal(status, 200);
   assert.equal(res.headers.get('content-type'), 'application/json; charset=utf-8');
   assert.equal(body.requires_api_key, false);
-  assert.ok(Object.keys(body.endpoints).length >= 4);
-  assert.equal(body.license, 'MIT');
+  assert.equal(body.base_url, 'https://spotify-api.local');
+  assert.equal(body.license, 'MIT (c) Thishan Dinujaya');
+
+  /* Endpoints are a structured list, each with its own absolute URL + example. */
+  assert.ok(Array.isArray(body.endpoints), 'endpoints is an array');
+  assert.ok(body.endpoints.length >= 5, 'at least 5 documented endpoints');
+  for (const e of body.endpoints) {
+    assert.ok(e.name && e.path && e.url, `endpoint ${e.name} has name/path/url`);
+    assert.ok(e.url.startsWith('https://spotify-api.local/'), `${e.name} url is absolute: ${e.url}`);
+    assert.ok(e.example?.startsWith('https://'), `${e.name} example is an absolute URL: ${e.example}`);
+    assert.ok(e.description, `${e.name} has a description`);
+  }
+  const scrape = body.endpoints.find((e) => e.name === 'scrape');
+  assert.ok(scrape.example.includes('url=https%3A%2F%2Fopen.spotify.com'), 'scrape example carries an encoded Spotify link');
+  assert.ok(scrape.curl.startsWith('curl "http'), 'scrape ships a copy-paste curl command');
+  assert.ok(scrape.options.length >= 4, 'query options documented');
+  for (const o of scrape.options) assert.ok(o.example.startsWith('https://'), `option ${o.param} has an example URL`);
+
+  /* "try_these" is a ready-to-click list. */
+  assert.ok(body.try_these.length >= 6);
+  for (const t of body.try_these) {
+    assert.ok(t.label && t.url.startsWith('https://spotify-api.local/'), `try_these entry is absolute: ${t.label}`);
+  }
+
+  assert.deepEqual(body.supported_types, ['track', 'album', 'playlist', 'artist', 'episode', 'show']);
+  assert.ok(body.accepted_inputs.some((s) => s.includes('spotify.link')), 'short links documented');
+  assert.ok(body.response_shape.preview_url, 'response fields documented');
+});
+
+test('/ is pretty-printed so it is readable in a browser', async () => {
+  const res = await worker.fetch(new Request('https://spotify-api.local/'), {}, {});
+  const text = await res.text();
+  assert.ok(text.includes('\n  "name"'), 'indented JSON');
+});
+
+test('/health reports the base URL and stays public', async () => {
+  const { status, body } = await call('/health');
+  assert.equal(status, 200);
+  assert.equal(body.base_url, 'https://spotify-api.local');
+  assert.equal(body.auth, 'public');
 });
 
 test('/health reports a public deployment with no API key', async () => {
