@@ -1,16 +1,29 @@
 {
   "name": "spotify-scraper-api",
-  "version": "1.0.0",
-  "description": "Public Spotify metadata and embed scraper API for Cloudflare Workers",
-  "main": "src/index.js",
+  "version": "2.2.0",
+  "description": "A single-file, keyless serverless API for public Spotify metadata and embeddable player links. Runs on Cloudflare Workers with zero runtime dependencies.",
   "type": "module",
+  "main": "worker.js",
   "author": "Thisan Dinujaya",
   "license": "MIT",
+  "keywords": [
+    "spotify",
+    "scraper",
+    "metadata",
+    "cloudflare-workers",
+    "workers",
+    "oembed",
+    "no-api-key",
+    "serverless",
+    "single-file"
+  ],
   "scripts": {
-    "dev": "wrangler dev --ip 0.0.0.0 --port 8785",
-    "deploy": "wrangler deploy"
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "test": "node test.js"
   },
   "devDependencies": {
-    "wrangler": "^3.114.0"
+    "wrangler": "^4.0.0"
   }
 }

@@ -1,0 +1,18 @@
+# Dependencies (wrangler is a dev dependency only - the Worker itself has none)
+node_modules/
+bun.lockb
+package-lock.json
+
+# Wrangler local state and build output
+.wrangler/
+dist/
+.dev.vars
+
+# Logs and OS junk
+*.log
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/

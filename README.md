@@ -82,8 +82,9 @@ serves to link-preview crawlers, and `open.spotify.com/oembed`.
 **No terminal needed** — see [Deploy with the dashboard](#1-deploy-with-the-dashboard-no-terminal-needed).
 
 ```bash
-# From a terminal, if you prefer:
-npx wrangler deploy worker.js --name spotify-scraper-api --compatibility-date 2026-05-01
+# From a terminal, if you prefer - wrangler.toml already points at worker.js:
+npm install --no-save wrangler@4   # only fetches Wrangler; the Worker has no deps
+npx wrangler deploy
 ```
 
 Then:
@@ -360,12 +361,58 @@ That is the whole deployment. There is nothing to install and nothing to build,
 and `worker.js` is pure ASCII so the dashboard editor detects it as valid
 JavaScript without complaint.
 
-### 2. Deploy button
+### 2. Deploy button / GitHub integration (Workers Builds)
 
-Click **Deploy to Cloudflare Workers** at the top of this README, sign in,
-review the settings and confirm. Remember to update the button's repository URL
-to your own before publishing. If your repository is private the button cannot
-reach it — use the dashboard or Wrangler instead.
+Click **Deploy to Cloudflare Workers** at the top of this README, or connect the
+repository yourself via **Workers & Pages → Create → Import from Git**. Cloudflare
+clones the repo, installs dependencies, and runs `npx wrangler deploy`.
+
+Remember to update the button's repository URL to your own before publishing. If
+your repository is private the button cannot reach it — use the dashboard or
+Wrangler instead.
+
+This repository already contains the two files that build needs:
+
+| File | Why it is required |
+| --- | --- |
+| `wrangler.toml` | Tells Wrangler **which file to upload** (`main = "worker.js"`) and which `compatibility_date` to use |
+| `package.json` | Pins `wrangler@^4` so the build does not install an outdated 3.x release |
+
+Without `wrangler.toml` the build fails like this:
+
+```text
+Executing user deploy command: npx wrangler deploy
+
+✘ [ERROR] Missing entry-point to Worker script or to assets directory
+
+  If there is code to deploy, you can either:
+  - Specify an entry-point to your Worker script via the command line
+    (ex: `npx wrangler deploy src/index.ts`)
+  - Or create a "wrangler.jsonc" file containing: …
+
+Failed: error occurred while running deploy command
+```
+
+That error means Wrangler found no configuration and no positional argument, so
+it does not know that `worker.js` is the Worker. Add the `wrangler.toml` from this
+repository (or set the build command to `npx wrangler deploy worker.js`).
+
+A second trap in the same build log: Cloudflare installed **wrangler 3.114.17**,
+which is old. If `compatibility_date` is set to a date newer than that release's
+runtime supports, the Worker fails to start instead of deploying. This repository
+therefore pins `compatibility_date = "2025-01-01"`, which works on both wrangler
+3.x and 4.x, and the Worker uses no feature that needs a newer date.
+
+Both combinations are verified:
+
+| wrangler | `deploy --dry-run` | runtime starts | scrape works |
+| --- | --- | --- | --- |
+| 3.114.17 (what Workers Builds installed) | ✅ 37.33 KiB / gzip 10.86 KiB | ✅ | ✅ 200 in 0.59 s |
+| 4.86.0 | ✅ | ✅ | ✅ |
+
+> Nothing else is needed. There is still no build step, no bundler config and no
+> runtime dependency — `package.json` exists only so the CI build picks a modern
+> Wrangler. If you deploy by pasting into the dashboard you can ignore both files.
 
 ### 3. Deploy with Wrangler
 
@@ -373,13 +420,21 @@ Node.js 18 or newer is enough; no `package.json` and no `npm install` are needed
 
 ```bash
 npx wrangler login
-npx wrangler deploy worker.js --name spotify-scraper-api --compatibility-date 2026-05-01
+npx wrangler deploy
+```
+
+`wrangler.toml` already sets `main = "worker.js"`, `name` and a
+`compatibility_date` that works on both Wrangler 3.x and 4.x, so no flags are
+needed. To deploy without that file at all, pass everything on the command line:
+
+```bash
+npx wrangler deploy worker.js --name spotify-scraper-api --compatibility-date 2025-01-01
 ```
 
 Run it locally first:
 
 ```bash
-npx wrangler dev worker.js --ip 0.0.0.0 --port 8785 --compatibility-date 2026-05-01
+npx wrangler dev            # reads wrangler.toml, serves http://localhost:8787
 ```
 
 ```bash
@@ -441,13 +496,22 @@ re-run before concluding that the worker is broken.
 ```text
 spotify-scraper-api/
 ├── worker.js              the entire API - paste this into Cloudflare
+├── wrangler.toml          entry point + compatibility date (needed for CLI/Git deploys)
+├── package.json           pins wrangler@^4 for CI builds; adds npm scripts
+├── .gitignore
 ├── test.js                25 tests, run with `node test.js`
 ├── example-response.json  a real captured response
 ├── README.md
 └── LICENSE
 ```
 
-No `package.json`, no `node_modules`, no build output, no bindings.
+The Worker itself has **no runtime dependencies, no build step and no bindings**.
+`wrangler.toml` and `package.json` exist purely so that `wrangler deploy` and
+Cloudflare's Git-integrated builds know what to upload and which Wrangler to use —
+if you paste `worker.js` into the dashboard you never need them.
+
+`npm install` is only ever needed to get Wrangler locally; `node test.js` works
+without it.
 
 ## Limitations
 
